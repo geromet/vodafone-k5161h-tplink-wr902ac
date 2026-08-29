@@ -1,0 +1,133 @@
+Vodafone K5161h -> TP-Link TL-WR902AC V4 modem profile
+=========================================================
+
+This documents exactly how Vodafone-K5161h-TPLINK.bin was built so you
+do not have to trust a prebuilt binary.
+
+SOURCE PROFILE
+--------------
+
+IMPORTANT:
+- ASCII text
+- CRLF line endings
+- final CRLF after [END]
+- there is one blank line before [END]
+
+[TP-3G]
+index=1
+vendor=HUAWEI
+model=K5161h 4G#1
+vid=12d1
+pid=1f1d
+msg=-s 20 -M "55534243123456780000000000000011062000000101000100000000000000"
+
+[END]
+
+WHAT IT DOES
+------------
+
+The Vodafone K5161h initially enumerates as:
+
+    12d1:1f1d
+
+The message above is the Huawei mode-switch command that makes this
+variant re-enumerate as:
+
+    12d1:1591
+
+which exposes its CDC-Ethernet / HiLink network interface.
+
+
+TP-LINK .BIN ENCODING
+---------------------
+
+The WR902AC modem profile is not uploaded as plain text.
+
+The binary is produced as follows:
+
+1. Encode the source profile above as ASCII with CRLF line endings.
+2. Calculate MD5 over those profile bytes.
+3. Prefix the 16-byte raw MD5 digest to the profile bytes:
+
+       plaintext = MD5(profile) || profile
+
+4. Encrypt the whole plaintext using DES in ECB mode with:
+
+       key = 47 8d a5 0b f9 e3 d2 cf
+
+   No padding is needed for this profile because the resulting plaintext
+   length is already a multiple of 8 bytes.
+
+5. Save the ciphertext as:
+
+       Vodafone-K5161h-TPLINK.bin
+
+
+REPRODUCIBLE PYTHON BUILDER
+---------------------------
+
+Requires:
+
+    python3 -m pip install cryptography
+
+Save the following as build_bin.py and run:
+
+    python3 build_bin.py
+
+-----------------------------------------------------------------------
+
+from pathlib import Path
+import hashlib
+
+from cryptography.hazmat.primitives.ciphers import Cipher, modes
+from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+
+profile = (
+    "[TP-3G]\r\n"
+    "index=1\r\n"
+    "vendor=HUAWEI\r\n"
+    "model=K5161h 4G#1\r\n"
+    "vid=12d1\r\n"
+    "pid=1f1d\r\n"
+    'msg=-s 20 -M "55534243123456780000000000000011062000000101000100000000000000"\r\n'
+    "\r\n"
+    "[END]\r\n"
+).encode("ascii")
+
+digest = hashlib.md5(profile).digest()
+plaintext = digest + profile
+
+assert len(plaintext) % 8 == 0
+
+# Triple-DES with the same 8-byte DES key repeated three times is
+# equivalent to single DES here, and is convenient with cryptography.
+des_key = bytes.fromhex("478da50bf9e3d2cf")
+
+cipher = Cipher(TripleDES(des_key * 3), modes.ECB())
+encryptor = cipher.encryptor()
+binary = encryptor.update(plaintext) + encryptor.finalize()
+
+Path("Vodafone-K5161h-TPLINK.bin").write_bytes(binary)
+
+print("size:", len(binary))
+print("sha256:", hashlib.sha256(binary).hexdigest())
+
+-----------------------------------------------------------------------
+
+EXPECTED RESULT
+---------------
+
+File size:
+
+    176 bytes
+
+SHA-256:
+
+    16be5ad4c07e0adaae1d8933ff2cdedeff17559dab9714f83863276b79675ac2
+
+MD5 of the final .bin file (not the embedded profile checksum):
+
+    6f2bc684134da580908da59135ef93a1
+
+If your generated file has the same SHA-256, it is byte-for-byte
+identical to the tested file.
